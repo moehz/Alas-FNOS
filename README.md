@@ -1,4 +1,4 @@
-# AzurLaneAutoScript FnOS 版
+# ALAS FnOS 版
 
 看到[MAA](https://github.com/mydanyi/MAA-FnOS)上架了飞牛商店，让我想到现在也可以用AI把[ALAS](https://github.com/LmeSzinc/AzurLaneAutoScript)打包一个飞牛原生应用。想到就做，跟AI battle了一个晚上的结果就是这个项目了，这个README.md其实也是AI生成（笑）。
 
@@ -6,7 +6,7 @@
 
 本项目把 [AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript)（Alas）  
 打包成飞牛 fnOS 的原生应用（`.fpk`）。安装后桌面上会多一个  
-**AzurLaneAutoScript** 图标，点开就是 Alas 自己的配置界面：配任务、看实时日志，  
+**ALAS** 图标，点开就是 Alas 自己的配置界面：配任务、看实时日志，  
 手机浏览器打开也能用，7x24 挂机交给 NAS。
 
 Python 运行时和 adb 都是打在包里的，**不用 Docker，也不用在飞牛上装任何依赖**。
@@ -15,10 +15,10 @@ Python 运行时和 adb 都是打在包里的，**不用 Docker，也不用在�
 
 ## 怎么装
 
-1. 到 [Releases](../../releases) 下载最新的 `azurlaneautoscript_*.fpk`（约 344 MB）
+1. 到 [Releases](../../releases) 下载最新的 `alas-fnos_*.fpk`（约 344 MB）
 2. 打开飞牛 **应用中心**，点左下角的 **手动安装**
 3. 选好存储空间，把 fpk 传上去（文件已经在 NAS 上，就点 **从 NAS 添加**）
-4. 装完在应用中心点启动，再点桌面上的 **AzurLaneAutoScript** 图标
+4. 装完在应用中心点启动，再点桌面上的 **ALAS** 图标
 
 它挂在飞牛自己的统一网关后面，不用记端口，也不占端口 —— 桌面那个图标点开就能用。
 
@@ -46,7 +46,7 @@ Alas 自带那个「检查更新 / 立即更新」按钮**是真的能用的**�
 还有两点要知道：
 
 - **依赖不会跟着更新。** 包里的 Python 依赖是打包时钉死的，上游新版如果引入了新依赖，  
-  更新后 Alas 会起不来。真遇到了就调 `POST /app/azurlaneautoscript/api/alas/reset` 回到出厂版本。  
+  更新后 Alas 会起不来。真遇到了就调 `POST /app/alas-fnos/api/alas/reset` 回到出厂版本。  
   这是「自带运行时、不依赖系统环境」这套做法的必然取舍。
 - 更新过程需要**约 240 MB 临时空间**，跑完会自动回收。
 
@@ -80,8 +80,8 @@ Alas 自带那个「检查更新 / 立即更新」按钮**是真的能用的**�
    仍是你来做。NAS 这一侧的 adb 不用你操心 —— 包里自带（platform-tools 的 adb，  
    1.1.0 起），启动应用时会自动把 adb server 拉起来。
 2. **打开配置界面**  
-   点桌面的 **AzurLaneAutoScript** 图标。包里的前端控制台还没做，所以会直接进 Alas 的配置界面，  
-   想自己拼路径就是 `/app/azurlaneautoscript/alas/`。
+   点桌面的 **ALAS** 图标。包里的前端控制台还没做，所以会直接进 Alas 的配置界面，  
+   想自己拼路径就是 `/app/alas-fnos/alas/`。
 3. **填 ADB 地址**  
    在 Alas 里进 *设置 → 模拟器/设备*，把上一步的地址填进去，连上就能看到截图了。
 4. **配任务、点运行**  
@@ -94,7 +94,7 @@ Alas 自带那个「检查更新 / 立即更新」按钮**是真的能用的**�
 ![架构](docs/architecture.svg)
 
 简单说：Alas 和一套自带的 Python 运行时随包发到飞牛上，由飞牛的统一网关挂在  
-`/app/azurlaneautoscript` 后面。真正对外提供服务的只有一个小控制台（`console_server.py`），  
+`/app/alas-fnos` 后面。真正对外提供服务的只有一个小控制台（`console_server.py`），  
 它负责三件事：把网关注入的登录态转成控制面接口、把 `/alas/**` 反代给 Alas 自己的  
 PyWebIO（含 WebSocket 日志），以及托管前端产物。
 

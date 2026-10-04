@@ -1,5 +1,5 @@
 #!/bin/bash
-# cmd/main —— AzurLaneAutoScript fnOS 控制台启停
+# cmd/main —— ALAS fnOS 控制台启停
 #
 #   start  启动控制台服务（console_server 会按 --autostart 顺带拉起 Alas）
 #   stop   先停 Alas 进程组，再停控制台，最后清理 PID / Socket
@@ -8,7 +8,7 @@
 # 约定：不硬编码安装路径，一律使用 TRIM_* 环境变量；本脚本幂等。
 set -u
 
-APPNAME="${TRIM_APPNAME:-azurlaneautoscript}"
+APPNAME="${TRIM_APPNAME:-alas-fnos}"
 APPDEST="${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
 PKGVAR="${TRIM_PKGVAR:?TRIM_PKGVAR 未设置}"
 PKGETC="${TRIM_PKGETC:-$APPDEST/etc}"

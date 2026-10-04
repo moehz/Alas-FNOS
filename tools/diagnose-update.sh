@@ -15,7 +15,7 @@
 # 判断口径见 deploy/fnos/HANDOFF.md 4.12。
 set -u
 
-APPNAME="${TRIM_APPNAME:-azurlaneautoscript}"
+APPNAME="${TRIM_APPNAME:-alas-fnos}"
 
 line() { printf '\n=== %s ===\n' "$1"; }
 getenv() { tr '\0' '\n' <"/proc/$1/environ" 2>/dev/null | sed -n "s/^$2=//p" | head -n1; }

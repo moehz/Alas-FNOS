@@ -9,7 +9,7 @@
 # 审计同 uninstall_init：echo + /tmp/<appname>-uninstall.log。
 set -u
 
-APPNAME="${TRIM_APPNAME:-azurlaneautoscript}"
+APPNAME="${TRIM_APPNAME:-alas-fnos}"
 AUDIT_LOG="/tmp/${APPNAME}-uninstall.log"
 
 audit() {
