@@ -1,0 +1,29 @@
+#!/bin/bash
+# upgrade_init —— 升级应用文件前执行
+# 幂等：备份用户配置（deploy.yaml），失败可回滚；不删除任何用户数据。
+#
+# 另外记录「升级前应用是否在运行」。平台不保证升级后把应用重新拉起来，
+# 而升级会替换 <target> 下的全部文件：老进程继续跑就等于还在用旧代码，
+# 表现是「装了新包却还是旧行为」。这里留个标记，交给 upgrade_callback 重启。
+set -u
+
+PKGVAR="${TRIM_PKGVAR:-}"
+APPDEST="${TRIM_APPDEST:-}"
+
+if [ -z "$PKGVAR" ]; then
+  exit 0
+fi
+
+DEPLOY_CONF="$PKGVAR/config/deploy.yaml"
+if [ -f "$DEPLOY_CONF" ]; then
+  cp -p "$DEPLOY_CONF" "$DEPLOY_CONF.bak" 2>/dev/null || true
+fi
+
+# 此时安装目录里还是旧文件，cmd/main status 能正确判定运行状态
+if [ -n "$APPDEST" ] && [ -x "$APPDEST/cmd/main" ]; then
+  if "$APPDEST/cmd/main" status >/dev/null 2>&1; then
+    : >"$PKGVAR/.upgrade-restart-pending" 2>/dev/null || true
+  fi
+fi
+
+exit 0

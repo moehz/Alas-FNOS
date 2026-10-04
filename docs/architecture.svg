@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="480" viewBox="0 0 880 480" role="img" aria-label="AzurLaneAutoScript for fnOS 架构示意">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/>
+    </marker>
+    <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#0969da"/>
+    </marker>
+    <style>
+      .box   { fill: #f6f8fa; stroke: #d0d7de; stroke-width: 1.5; rx: 8; }
+      .inner { fill: #ffffff; stroke: #d8dee4; stroke-width: 1; rx: 6; }
+      .t     { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 14px; font-weight: 600; fill: #1f2328; }
+      .s     { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12px; fill: #57606a; }
+      .si    { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 12px; fill: #1f2328; }
+      .lbl   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 11px; fill: #57606a; }
+      .num   { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 11px; font-weight: 700; fill: #0969da; }
+      .flow  { stroke: #57606a; stroke-width: 1.5; fill: none; marker-end: url(#arrow); }
+      .flowa { stroke: #0969da; stroke-width: 1.5; fill: none; marker-end: url(#arrow-accent); }
+      .dash  { stroke: #8c959f; stroke-width: 1.2; fill: none; stroke-dasharray: 4 4; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="880" height="480" fill="#ffffff"/>
+
+  <!-- A 桌面入口 -->
+  <rect class="box" x="48" y="24" width="340" height="58"/>
+  <text class="t" x="66" y="48">飞牛 fnOS 桌面 · 应用中心</text>
+  <text class="s" x="66" y="68">入口卡片 azurlaneautoscript.main（iframe）</text>
+
+  <!-- B 统一网关 -->
+  <rect class="box" x="48" y="126" width="340" height="58"/>
+  <text class="t" x="66" y="150">飞牛统一网关</text>
+  <text class="s" x="66" y="170">前缀 /app/azurlaneautoscript · 注入登录态</text>
+
+  <!-- C 控制台 -->
+  <rect class="box" x="48" y="228" width="340" height="170"/>
+  <text class="t" x="66" y="252">控制台 console_server</text>
+  <text class="s" x="66" y="270">uvicorn · 监听 $TRIM_APPDEST/app.sock</text>
+  <rect class="inner" x="64" y="282" width="308" height="32"/>
+  <text class="si" x="76" y="303">控制面 API：/api/status|start|stop|log</text>
+  <rect class="inner" x="64" y="320" width="308" height="32"/>
+  <text class="si" x="76" y="341">反代 Alas：{prefix}/alas/**</text>
+  <rect class="inner" x="64" y="358" width="308" height="32"/>
+  <text class="si" x="76" y="379">静态托管：无产物时 308 → /alas/</text>
+
+  <!-- D Alas -->
+  <rect class="box" x="492" y="228" width="340" height="76"/>
+  <text class="t" x="510" y="256">Alas（PyWebIO 配置界面）</text>
+  <text class="s" x="510" y="278">127.0.0.1:22267 · 仅本机监听，不对外暴露</text>
+
+  <!-- E 运行时 -->
+  <rect class="box" x="492" y="330" width="340" height="68"/>
+  <text class="t" x="510" y="356">可移植 CPython 3.7 运行时</text>
+  <text class="s" x="510" y="378">自包含 · 随包分发 · 不依赖 Docker</text>
+
+  <!-- F 数据 -->
+  <rect class="box" x="48" y="424" width="784" height="44"/>
+  <text class="s" x="66" y="451">数据落盘：$TRIM_PKGVAR（Alas 配置 deploy.yaml / 日志 / PID）—— 覆盖安装不会动它</text>
+
+  <!-- 连线 -->
+  <path class="flow" d="M 218 82 L 218 120"/>
+  <text class="num" x="228" y="102">1</text>
+  <text class="lbl" x="242" y="102">打开桌面入口</text>
+
+  <path class="flow" d="M 218 184 L 218 222"/>
+  <text class="num" x="228" y="204">2</text>
+  <text class="lbl" x="242" y="204">转发到 app.sock</text>
+
+  <path class="flowa" d="M 388 266 L 486 266"/>
+  <text class="num" x="400" y="258">3</text>
+  <text class="lbl" x="412" y="258">反代（含 WebSocket）</text>
+
+  <path class="flow" d="M 662 330 L 662 310"/>
+  <text class="num" x="672" y="324">4</text>
+  <text class="lbl" x="686" y="324">用同一解释器拉起 Alas</text>
+
+  <path class="dash" d="M 388 380 L 486 366"/>
+  <text class="lbl" x="396" y="398">解释执行</text>
+
+  <path class="dash" d="M 218 424 L 218 400"/>
+  <text class="lbl" x="228" y="418">读写数据</text>
+</svg>

@@ -1,0 +1,27 @@
+[
+  {
+    "stepTitle": "卸载选项",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "卸载此应用不会影响 Android 设备与 ADB 配置（那部分一直由你自己维护）。\n下方决定的是应用数据：Alas 的配置、日志、以及运行期更新过的脚本。"
+      },
+      {
+        "type": "radio",
+        "field": "wizard_data_action",
+        "label": "应用数据处理",
+        "initValue": "keep",
+        "options": [
+          {
+            "label": "保留数据（推荐）—— 配置、日志与脚本都留在应用数据目录，重新安装后自动沿用",
+            "value": "keep"
+          },
+          {
+            "label": "删除全部数据 —— 不可恢复，重新安装等同于全新安装",
+            "value": "purge"
+          }
+        ]
+      }
+    ]
+  }
+]

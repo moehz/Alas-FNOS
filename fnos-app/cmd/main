@@ -1,0 +1,153 @@
+#!/bin/bash
+# cmd/main —— AzurLaneAutoScript fnOS 控制台启停
+#
+#   start  启动控制台服务（console_server 会按 --autostart 顺带拉起 Alas）
+#   stop   先停 Alas 进程组，再停控制台，最后清理 PID / Socket
+#   status 运行返回 0，未运行返回 3，未知参数返回 1
+#
+# 约定：不硬编码安装路径，一律使用 TRIM_* 环境变量；本脚本幂等。
+set -u
+
+APPNAME="${TRIM_APPNAME:-azurlaneautoscript}"
+APPDEST="${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
+PKGVAR="${TRIM_PKGVAR:?TRIM_PKGVAR 未设置}"
+PKGETC="${TRIM_PKGETC:-$APPDEST/etc}"
+
+PY="$APPDEST/runtime/bin/python3.7"
+SERVER="$APPDEST/server/console_server.py"
+SOCKET="$APPDEST/app.sock"
+CONSOLE_DIST="$APPDEST/console/dist"
+PORT="${TRIM_SERVICE_PORT:-22267}"
+
+CONSOLE_PID_FILE="$PKGVAR/console.pid"
+CONSOLE_LOG="$PKGVAR/console.log"
+ALAS_PID_FILE="$PKGVAR/alas.pid"
+
+fail() {
+  echo "$*" >&2
+  [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$*" >>"${TRIM_TEMP_LOGFILE}"
+  return 1
+}
+
+# 读取 PID 文件中的 PID（同行可带 '|额外字段'）；进程存活则输出 PID，否则返回 1
+read_live_pid() {
+  local file="$1" pid
+  [ -f "$file" ] || return 1
+  pid="$(head -n1 "$file" 2>/dev/null | cut -d'|' -f1)"
+  [ -n "$pid" ] || return 1
+  case "$pid" in *[!0-9]*) return 1 ;; esac
+  kill -0 "$pid" 2>/dev/null || return 1
+  printf '%s' "$pid"
+}
+
+is_running() {
+  read_live_pid "$CONSOLE_PID_FILE" >/dev/null 2>&1
+}
+
+start_app() {
+  if is_running; then
+    return 0
+  fi
+
+  [ -x "$PY" ] || { fail "运行时缺失或不可执行：$PY"; return 1; }
+  [ -f "$SERVER" ] || { fail "控制台服务缺失：$SERVER"; return 1; }
+
+  mkdir -p "$PKGVAR" || { fail "无法创建数据目录：$PKGVAR"; return 1; }
+  rm -f "$CONSOLE_PID_FILE" "$SOCKET"
+
+  # 运行时的 OpenSSL 等库在 <runtime>/lib，必须导出后才可 import uvicorn
+  export LD_LIBRARY_PATH="$APPDEST/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export PYTHONUNBUFFERED=1
+
+  cd "$APPDEST" || { fail "无法进入安装目录：$APPDEST"; return 1; }
+
+  nohup "$PY" "$SERVER" \
+    --appname "$APPNAME" \
+    --appdest "$APPDEST" \
+    --pkgetc "$PKGETC" \
+    --pkgvar "$PKGVAR" \
+    --socket "$SOCKET" \
+    --console-dist "$CONSOLE_DIST" \
+    --port "$PORT" \
+    --autostart true \
+    >>"$CONSOLE_LOG" 2>&1 &
+  local pid=$!
+  echo "$pid" >"$CONSOLE_PID_FILE"
+
+  # 等待进程存活并（尽量）等到 Socket 就绪
+  local i=0
+  while [ "$i" -lt 15 ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$CONSOLE_PID_FILE" "$SOCKET"
+      fail "控制台服务启动失败，请查看日志：$CONSOLE_LOG"
+      return 1
+    fi
+    [ -S "$SOCKET" ] && return 0
+    sleep 1
+    i=$((i + 1))
+  done
+  # 进程仍在但 Socket 尚未出现：视为启动中，交由 status 判定
+  return 0
+}
+
+# 停止一个进程（可选按进程组）：$1=PID
+terminate_pid() {
+  local pid="$1" timeout="${2:-20}" i=0
+  [ -n "$pid" ] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+
+  kill -TERM "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$timeout" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
+
+# Alas 由 console_server 以 start_new_session 启动，是进程组组长
+terminate_group() {
+  local pid="$1" timeout="${2:-20}" i=0
+  [ -n "$pid" ] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+
+  kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$timeout" ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+  fi
+}
+
+stop_app() {
+  # 1) 优雅停止 Alas（其 PID 由 console_server 维护）
+  local alas_pid
+  alas_pid="$(read_live_pid "$ALAS_PID_FILE" 2>/dev/null || true)"
+  terminate_group "$alas_pid" 20
+
+  # 2) 停止控制台
+  local console_pid
+  console_pid="$(read_live_pid "$CONSOLE_PID_FILE" 2>/dev/null || true)"
+  terminate_pid "$console_pid" 20
+
+  # 3) 清理残留（含陈旧 PID / Socket）
+  rm -f "$CONSOLE_PID_FILE" "$ALAS_PID_FILE" "$SOCKET"
+  return 0
+}
+
+status_app() {
+  if is_running; then
+    exit 0
+  fi
+  exit 3
+}
+
+case "${1:-}" in
+  start) start_app ;;
+  stop) stop_app ;;
+  status) status_app ;;
+  *) exit 1 ;;
+esac

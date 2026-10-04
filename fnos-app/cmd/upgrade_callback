@@ -1,0 +1,34 @@
+#!/bin/bash
+# upgrade_callback —— 升级应用文件后执行
+# 幂等：补建数据目录；若升级前应用在运行，则把服务重启到新代码上。
+# 配置迁移由 console_server 启动时的 prepare() 负责。
+set -u
+
+PKGVAR="${TRIM_PKGVAR:-}"
+APPDEST="${TRIM_APPDEST:-}"
+
+if [ -n "$PKGVAR" ]; then
+  mkdir -p "$PKGVAR/config" "$PKGVAR/log" 2>/dev/null || true
+fi
+
+# upgrade_init 留下的标记：升级前应用在运行
+MARKER="$PKGVAR/.upgrade-restart-pending"
+if [ -z "$PKGVAR" ] || [ -z "$APPDEST" ] || [ ! -f "$MARKER" ]; then
+  exit 0
+fi
+rm -f "$MARKER" 2>/dev/null || true
+
+MAIN="$APPDEST/cmd/main"
+[ -x "$MAIN" ] || exit 0
+
+# 停掉仍在跑旧代码的进程（旧 console + 旧 Alas），再由 cmd/main 拉起新代码。
+# 新 console 启动时会重跑 prepare() → seed_alas()：源码树按新包基线重播、
+# 版本记录同步，更新面板显示的「本地版本」才会跟着新包走。
+"$MAIN" stop >/dev/null 2>&1 || true
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$MAIN" start >/dev/null 2>&1 || "$MAIN" start >/dev/null 2>&1 || true
+else
+  "$MAIN" start >/dev/null 2>&1 || true
+fi
+
+exit 0

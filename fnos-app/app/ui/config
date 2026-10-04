@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "azurlaneautoscript.main": {
+      "title": "AzurLaneAutoScript",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "protocol": "",
+      "gatewayPrefix": "/app/azurlaneautoscript",
+      "gatewaySocket": "app.sock",
+      "url": "/app/azurlaneautoscript",
+      "allUsers": true
+    }
+  }
+}

@@ -1,0 +1,65 @@
+#!/bin/bash
+# uninstall_callback —— 卸载清理后执行
+#
+# 兜底阶段：若用户在向导里选了「删除全部数据」，而 uninstall_init 因故没清干净
+# （例如服务当时没停下来、残留了写入；或 $TRIM_PKGVAR 指向的软链已被平台移走，
+# 导致 init 阶段按环境变量清理变成了静默 no-op），这里按 appname 重新定位
+# 真实数据目录再清一次。
+# 默认（keep）下什么都不做 —— 应用数据保留，重装后自动沿用。
+# 审计同 uninstall_init：echo + /tmp/<appname>-uninstall.log。
+set -u
+
+APPNAME="${TRIM_APPNAME:-azurlaneautoscript}"
+AUDIT_LOG="/tmp/${APPNAME}-uninstall.log"
+
+audit() {
+  echo "$1"
+  echo "[$(date '+%F %T')] $1" >>"${AUDIT_LOG}" 2>/dev/null || true
+}
+
+resolve_pkgvar() {
+  local candidate="${1:-}"
+  if [ -n "${candidate}" ] && [ -d "${candidate}" ]; then
+    printf '%s' "${candidate}"
+    return 0
+  fi
+  local p
+  for p in /vol*/@appdata/"${APPNAME}"; do
+    [ -d "${p}" ] && { printf '%s' "${p}"; return 0; }
+  done
+  return 1
+}
+
+DATA_ACTION="$(printf '%s' "${wizard_data_action:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+case "${DATA_ACTION}" in
+  purge|delete|remove|clean|true|1|yes) PURGE=1 ;;
+  *) PURGE=0 ;;
+esac
+
+PKGVAR="$(resolve_pkgvar "${TRIM_PKGVAR:-}" || true)"
+
+audit "uninstall_callback：wizard_data_action=${DATA_ACTION:-（空）} PURGE=${PURGE} TRIM_PKGVAR=${TRIM_PKGVAR:-（空）} 解析到=${PKGVAR:-（未找到）}"
+
+if [ "${PURGE}" -ne 1 ] || [ -z "${PKGVAR}" ]; then
+  exit 0
+fi
+
+case "${PKGVAR}" in
+  "/"|"/var"|"/usr"|"/vol"|"/vol1"|"/vol2"|"/vol3")
+    audit "数据目录路径异常，拒绝清理：${PKGVAR}"
+    exit 0
+    ;;
+esac
+
+if [ -d "${PKGVAR}" ]; then
+  rm -rf "${PKGVAR}/config" "${PKGVAR}/log" "${PKGVAR}/alas" 2>/dev/null || true
+  rm -f "${PKGVAR}/alas.log" "${PKGVAR}/alas.pid" "${PKGVAR}/console.pid" \
+        "${PKGVAR}/console.log" "${PKGVAR}/alas_version.json" 2>/dev/null || true
+  for path in "${PKGVAR}"/.alas-prev-* "${PKGVAR}"/.alas-staging-* "${PKGVAR}"/.alas-download*; do
+    [ -e "${path}" ] || continue
+    rm -rf "${path}" 2>/dev/null || true
+  done
+  audit "兜底清理完成：${PKGVAR}；剩余：$(ls -A "${PKGVAR}" 2>/dev/null | tr '\n' ' ')"
+fi
+
+exit 0

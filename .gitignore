@@ -1,0 +1,25 @@
+# 只跟踪可复现的源码 / 脚本 / 骨架；产物与工具都不入库
+
+.DS_Store
+*.fpk
+
+# 第一阶段：可移植 CPython 运行时（约 703 MB，由 runtime/build.sh 生成）
+runtime/dist/
+
+# Alas 源码检出（按 docs/构建指南.md 自行 clone，不入库）
+.alas/
+
+# fnpack 打包器（第三方二进制，按构建指南自行获取）
+tools/fnpack
+
+# 装配产物（硬链接/复制的运行时与源码；骨架本体仍跟踪）
+fnos-app/app/alas/
+fnos-app/app/runtime/
+fnos-app/app/server/
+fnos-app/app/console/
+fnos-app/app/patch/
+fnos-app/app/bin/
+fnos-app/app/alas_version.json
+
+# 打包输出
+dist/
