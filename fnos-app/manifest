@@ -1,0 +1,15 @@
+appname=azurlaneautoscript
+version=1.1.1
+display_name=AzurLaneAutoScript
+desc=AzurLaneAutoScript (Alas) 飞牛 fnOS 原生控制台。内置可移植 Python 运行时，经统一网关访问；可启停 Alas 并打开其配置界面，ADB 设备由使用者自行配置。
+source=thirdparty
+platform=x86
+maintainer=AzurLaneAutoScript
+maintainer_url=https://github.com/LmeSzinc/AzurLaneAutoScript
+os_min_version=1.2.0401
+desktop_uidir=ui
+desktop_applaunchname=azurlaneautoscript.main
+ctl_stop=true
+checkport=false
+micro_app=true
+disable_authorization_path=true

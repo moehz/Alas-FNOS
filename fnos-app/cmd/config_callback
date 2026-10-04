@@ -1,0 +1,5 @@
+#!/bin/bash
+# config_callback —— 应用配置变更后执行
+# 本应用无向导配置项，无操作。
+set -u
+exit 0

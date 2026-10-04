@@ -1,0 +1,22 @@
+#!/bin/bash
+# install_callback —— 应用文件安装完成后执行
+# 幂等：准备应用私有数据目录，并修复运行时可执行位。
+set -u
+
+APPDEST="${TRIM_APPDEST:?TRIM_APPDEST 未设置}"
+PKGVAR="${TRIM_PKGVAR:?TRIM_PKGVAR 未设置}"
+
+fail() {
+  echo "$*" >&2
+  [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$*" >>"${TRIM_TEMP_LOGFILE}"
+  exit 1
+}
+
+mkdir -p "$PKGVAR/config" "$PKGVAR/log" || fail "无法创建应用数据目录：$PKGVAR"
+
+# 运行时主程序的执行位（打包/传输过程可能丢失；缺失时留待启动阶段报错）
+if [ -f "$APPDEST/runtime/bin/python3.7" ]; then
+  chmod +x "$APPDEST/runtime/bin/python3.7" 2>/dev/null || true
+fi
+
+exit 0
