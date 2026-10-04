@@ -2,6 +2,8 @@
 
 看到[MAA](https://github.com/mydanyi/MAA-FnOS)上架了飞牛商店，让我想到现在也可以用AI把[ALAS](https://github.com/LmeSzinc/AzurLaneAutoScript)打包一个飞牛原生应用。想到就做，跟AI battle了一个晚上的结果就是这个项目了，这个README.md其实也是AI生成（笑）。
 
+不过我没有将 redroid 打包进来，我觉得还是纯粹一点比较好，redroid 建议还是 Docker 构建后手动连接。
+
 本项目把 [AzurLaneAutoScript](https://github.com/LmeSzinc/AzurLaneAutoScript)（Alas）  
 打包成飞牛 fnOS 的原生应用（`.fpk`）。安装后桌面上会多一个  
 **AzurLaneAutoScript** 图标，点开就是 Alas 自己的配置界面：配任务、看实时日志，  
@@ -27,7 +29,7 @@ Python 运行时和 adb 都是打在包里的，**不用 Docker，也不用在�
 
 有两条路，按需要选：
 
-**1. 更新 Alas 脚本 —— 直接在界面里点（1.0.2 起可用）**
+**1. 更新 Alas 脚本 —— 直接在界面里点**
 
 Alas 自带那个「检查更新 / 立即更新」按钮**是真的能用的**。上游 Alas 一更新（主要是新地图适配），  
 你在 Alas 的更新面板点一下就能换到最新版，**不用重装 fpk**。
@@ -113,10 +115,6 @@ Alas 得有台安卓机器才能干活，这台机器不在本应用的管理范
 - **真机**：开「无线调试」或 `adb tcpip 5555`，地址填 `<手机IP>:5555`
 - **模拟器**：跑在别的机器上，`adb connect` 能连通即可
 - **容器化安卓**：飞牛的 Docker 里跑一个安卓容器，端口映射到宿主，地址填 `<NAS_IP>:5555`
-
-**redroid 这类容器化安卓没有打包进本应用。** 应用只做 Alas 与运行时的搬运，安卓端保持  
-外部自理 —— 包体更小，也不用向平台申请 Docker 权限。想用 redroid 就自己在飞牛的 Docker  
-里构建好容器，再回 Alas 手动填地址连接。
 
 要注意的是 Alas 的截图方式：本包**没有打包 `av`（PyAV）**，所以 scrcpy 那条路是走不通的，  
 截图方式请挑别的。ADB 方面，`AdbExecutable` 默认就是 `adb`，它指向**包内自带的**  
