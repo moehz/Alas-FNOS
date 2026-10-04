@@ -1,6 +1,6 @@
 # ALAS FnOS 版
 
-看到[MAA](https://github.com/mydanyi/MAA-FnOS)上架了飞牛商店，让我想到现在也可以用AI把[ALAS](https://github.com/LmeSzinc/AzurLaneAutoScript)打包一个飞牛原生应用。想到就做，跟AI battle了一个晚上的结果就是这个项目了，这个README.md其实也是AI生成（笑）。
+看到[MAA](https://github.com/mydanyi/MAA-FnOS)上架了飞牛商店，我就想着我们[ALAS](https://github.com/LmeSzinc/AzurLaneAutoScript)也不能落下啊！想到就做，跟AI battle了一个晚上的结果就是这个项目了，这个README.md其实也是AI生成（笑）。
 
 不过我没有将 redroid 打包进来，我觉得还是纯粹一点比较好，redroid 建议还是 Docker 构建后手动连接。
 
