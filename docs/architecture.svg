@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="480" viewBox="0 0 880 480" role="img" aria-label="AzurLaneAutoScript for fnOS 架构示意">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="480" viewBox="0 0 880 480" role="img" aria-label="ALAS for fnOS 架构示意">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#57606a"/>
@@ -25,12 +25,12 @@
   <!-- A 桌面入口 -->
   <rect class="box" x="48" y="24" width="340" height="58"/>
   <text class="t" x="66" y="48">飞牛 fnOS 桌面 · 应用中心</text>
-  <text class="s" x="66" y="68">入口卡片 azurlaneautoscript.main（iframe）</text>
+  <text class="s" x="66" y="68">入口卡片 alas-fnos.main（iframe）</text>
 
   <!-- B 统一网关 -->
   <rect class="box" x="48" y="126" width="340" height="58"/>
   <text class="t" x="66" y="150">飞牛统一网关</text>
-  <text class="s" x="66" y="170">前缀 /app/azurlaneautoscript · 注入登录态</text>
+  <text class="s" x="66" y="170">前缀 /app/alas-fnos · 注入登录态</text>
 
   <!-- C 控制台 -->
   <rect class="box" x="48" y="228" width="340" height="170"/>

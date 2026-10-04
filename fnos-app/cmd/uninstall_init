@@ -12,7 +12,7 @@
 # 因此这里把「环境变量是什么、解析到哪个目录、删了什么、剩了什么」全部留痕。
 set -u
 
-APPNAME="${TRIM_APPNAME:-azurlaneautoscript}"
+APPNAME="${TRIM_APPNAME:-alas-fnos}"
 AUDIT_LOG="/tmp/${APPNAME}-uninstall.log"
 
 audit() {

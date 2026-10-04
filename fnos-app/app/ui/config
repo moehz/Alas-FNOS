@@ -1,13 +1,13 @@
 {
   ".url": {
-    "azurlaneautoscript.main": {
-      "title": "AzurLaneAutoScript",
+    "alas-fnos.main": {
+      "title": "ALAS",
       "icon": "images/icon_{0}.png",
       "type": "iframe",
       "protocol": "",
-      "gatewayPrefix": "/app/azurlaneautoscript",
+      "gatewayPrefix": "/app/alas-fnos",
       "gatewaySocket": "app.sock",
-      "url": "/app/azurlaneautoscript",
+      "url": "/app/alas-fnos",
       "allUsers": true
     }
   }

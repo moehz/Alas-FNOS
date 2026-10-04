@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-AzurLaneAutoScript 飞牛 fnOS 控制台后端（阶段2）。
+ALAS 飞牛 fnOS 控制台后端（阶段2）。
 
 职责：
   1. 监听 "${TRIM_APPDEST}/app.sock"，由 fnOS 统一网关注入登录态后转发。
@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 
-APPNAME_DEFAULT = "azurlaneautoscript"
+APPNAME_DEFAULT = "alas-fnos"
 WEBUI_PORT_DEFAULT = 22267
 
 # 反代时不能透传的逐跳首部
