@@ -31,10 +31,11 @@
 
 更新来源与校验
 --------------
-版本探测**并发**请求多个端点（官方 GitHub API 在前，国内镜像在后），先返回者胜出；
-因此镜像只影响速度，不影响最坏耗时。镜像返回的 commit 必须通过官方接口确认确实存在
-于上游，被官方明确否认时本次「检查更新」直接报失败，而不是把一个来源可疑的 commit
-写进本地记录。
+**版本真值取官方提交列表的第一行**（与面板「详细提交历史」同源，两处不可能互相矛盾）；
+镜像只在官方接口不可达时按 ``LATEST_URLS`` 顺序兜底 —— **顺序即优先级，不并发抢答**：
+抢答比的是延迟，而延迟与新鲜度无关。2026-10-05 实测踩过这个坑：GOC COS 0.18s 但停在
+77f4d01，123clouddisk 0.20s 且已是 b9a965c，抢答把过期版本顶上来，面板于是显示
+「已是最新」，而历史表里明明列着更新的提交。
 
 下载到的源码包还有两道闸：包名必须以请求的 commit 结尾（``<repo>-<sha>``）；解压时拒绝
 ``..``、指向外部的链接与设备/FIFO 成员。这两道闸保证「下载源被换掉」也不会让更新落到
@@ -57,7 +58,6 @@
 
 import json
 import os
-import queue
 import re
 import shutil
 import ssl
@@ -79,15 +79,16 @@ GITHUB_API = "https://api.github.com/repos/" + REPO
 #: 官方版本端点（版本真值，同时也是交叉校验的依据）
 OFFICIAL_LATEST = GITHUB_API + "/branches/" + BRANCH
 
-#: 版本探测端点。官方在前、镜像在后；实际是并发探测、先到先得，顺序只决定「同样快时
-#: 优先谁」。后两项是经 GitHub 代理的官方 API，响应形状与官方一致。
+#: 版本探测端点（官方接口不可达时的兜底），**顺序即优先级，按序取第一个可用**。
+#: 2026-10-05 实测各源新鲜度：123clouddisk 已是 b9a965c、gh-proxy 已是 b9a965c，
+#: 而 GOC COS 仍停在 77f4d01（延迟同量级）—— 过期的那个排到最后，免得被"快"选中。
 #: 可用 ALAS_FNOS_LATEST_URLS 覆盖（逗号或空白分隔）。
 LATEST_URLS = (
     OFFICIAL_LATEST,
     "https://1818706573.cdn.123clouddisk.com/1818706573/pack/LmeSzinc_AzurLaneAutoScript_master/latest.json",
-    "https://alas-goc-1254325529.cos.ap-shanghai.myqcloud.com/LmeSzinc_AzurLaneAutoScript_master/latest.json",
-    "https://ghfast.top/" + OFFICIAL_LATEST,
     "https://gh-proxy.com/" + OFFICIAL_LATEST,
+    "https://ghfast.top/" + OFFICIAL_LATEST,
+    "https://alas-goc-1254325529.cos.ap-shanghai.myqcloud.com/LmeSzinc_AzurLaneAutoScript_master/latest.json",
 )
 
 #: 源码包下载源，**串行**回退（官方 codeload 在前；镜像只用于加速）。
@@ -112,7 +113,7 @@ LINKED_DIRS = ("config", "log")
 _UPDATER_MODULE = "module.webui.updater"
 _PROC_DIR = "/proc"
 _REMOTE_TTL = 300.0
-_HTTP_TIMEOUT = 20
+_LATEST_TIMEOUT = 8
 _VERIFY_TIMEOUT = 8
 _DOWNLOAD_TIMEOUT = 60
 _CHUNK = 256 * 1024
@@ -307,33 +308,6 @@ def _valid_commit(value):
     return bool(value) and bool(_SHA_RE.match(value))
 
 
-def _probe_first(urls, fetch, timeout):
-    """并发请求多个端点，返回第一个成功的结果；全部失败返回 ``(None, None)``。
-
-    串行回退的最坏耗时是「端点数 × 超时」，并发后只剩一个超时窗口。每个 worker
-    无论成功还是抛异常都只投递一次结果，所以 ``results.get()`` 不会空等。
-    """
-    results = queue.Queue()
-
-    def worker(url):
-        try:
-            results.put((True, url, fetch(url, timeout)))
-        except Exception as exc:
-            _log("端点探测失败 %s：%r" % (url, exc))
-            results.put((False, url, None))
-
-    for url in urls:
-        thread = threading.Thread(target=worker, args=(url,), name="alas-fnos-probe")
-        thread.daemon = True
-        thread.start()
-
-    for _ in urls:
-        ok, url, value = results.get()
-        if ok:
-            return value, url
-    return None, None
-
-
 def _parse_latest(data):
     """解析版本探测响应，返回 ``(commit, time)``。
 
@@ -366,23 +340,25 @@ def _parse_latest(data):
 
 
 def fetch_latest():
-    """并发探测上游最新版本，返回 ``(commit, time, source)``。
+    """按 ``LATEST_URLS`` 顺序探测上游版本，返回 ``(commit, time, source)``。
 
-    全部端点失败返回 ``(None, None, None)``。非 SHA 的返回值按失败处理（不计入候选），
-    所以镜像即使返回分支名或别的字符串也不会被采信。
+    顺序即优先级：**不并发**。并发会让"响应最快"的源胜出，而镜像的快慢与新鲜度无关，
+    快的那个可能恰好是过期的（见模块 docstring 的实测）。全部端点失败返回
+    ``(None, None, None)``；非 SHA 的返回值按失败处理，不会被采信。
     """
-
-    def probe(url, timeout):
-        commit, stamp = _parse_latest(json.loads(_http_get(url, timeout).decode("utf-8")))
-        commit = (commit or "").strip()
-        if not _valid_commit(commit):
-            raise ValueError("commit 非法：%r" % (commit,))
-        return commit, stamp
-
-    info, source = _probe_first(latest_urls(), probe, _HTTP_TIMEOUT)
-    if not info:
-        return None, None, None
-    return info[0], info[1], source
+    for url in latest_urls():
+        try:
+            commit, stamp = _parse_latest(
+                json.loads(_http_get(url, _LATEST_TIMEOUT).decode("utf-8"))
+            )
+            commit = (commit or "").strip()
+            if not _valid_commit(commit):
+                _log("端点返回值不是合法 commit，跳过 %s：%r" % (url, commit))
+                continue
+            return commit, stamp, url
+        except Exception as exc:
+            _log("端点探测失败 %s：%r" % (url, exc))
+    return None, None, None
 
 
 def verify_commit(commit):
@@ -409,12 +385,15 @@ def verify_commit(commit):
 
 
 def _fetch_github_commits(limit=20):
-    """拉取上游最近若干次提交，返回 ``[(sha, author, time, message)]``；失败返回空表。"""
+    """拉取上游最近若干次提交，返回 ``[(sha, author, time, message)]``；失败返回空表。
+
+    第一行就是 master 的最新提交，因此它同时是「上游版本」的**版本真值**。
+    """
     url = "%s/commits?sha=%s&per_page=%d" % (GITHUB_API, BRANCH, limit)
     try:
         data = json.loads(_http_get(url, 8).decode("utf-8"))
     except Exception as exc:
-        _log("提交历史获取失败（不影响更新）：%r" % (exc,))
+        _log("官方提交列表获取失败（版本将退回镜像探测）：%r" % (exc,))
         return []
 
     rows = []
@@ -435,29 +414,31 @@ def _fetch_github_commits(limit=20):
 
 
 def fetch_remote(force=False):
-    """上游版本详情与提交历史（带 TTL 缓存），返回 ``(info, history)``。"""
+    """上游版本详情与提交历史（带 TTL 缓存），返回 ``(info, history)``。
+
+    版本真值优先取**官方提交列表的第一行**：面板上「上游版本」与「详细提交历史」本就要
+    一起显示，同源才不会出现「上游显示旧版本、历史里却有新提交」的自相矛盾。
+    官方接口不可达时才退回镜像（按配置顺序，不抢答）。
+    """
     now = time.time()
     with _state_lock:
         cached = _remote_cache["info"]
         if not force and cached and now - _remote_cache["at"] < _REMOTE_TTL:
             return cached, list(_remote_cache["history"])
 
-    commit, commit_time, source = fetch_latest()
-    info = None
-    history = []
-    if commit:
-        if source and source != OFFICIAL_LATEST:
-            _log("上游版本来自镜像 %s：%s" % (source, commit[:8]))
-        if verify_commit(commit) is False:
-            _log("上游版本 %s 未获官方确认，本次丢弃该结果" % commit[:8])
-            commit = ""
-    if commit:
-        info = (commit, "", commit_time or "", "")
-        history = _fetch_github_commits()
-        for row in history:
-            if row[0] == commit:
-                info = row
-                break
+    history = _fetch_github_commits()
+    info = history[0] if history else None
+    if info:
+        _log("上游版本（官方）：%s %s" % (info[0][:8], info[2]))
+    else:
+        commit, stamp, source = fetch_latest()
+        if not commit:
+            _log("上游版本探测失败：官方接口与全部镜像都不可用，本次不作判断")
+        elif verify_commit(commit) is False:
+            _log("镜像版本 %s 未获官方确认，本次丢弃该结果" % commit[:8])
+        else:
+            info = (commit, "", stamp or "", "")
+            _log("官方接口不可用，采用镜像版本 %s（%s）" % (commit[:8], source or "?"))
 
     with _state_lock:
         _remote_cache["at"] = time.time()
