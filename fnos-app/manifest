@@ -15,4 +15,4 @@ ctl_stop=true
 checkport=false
 micro_app=true
 disable_authorization_path=true
-changelog=桌面入口直达 Alas 配置界面（去掉未启用的前端托管与多余跳转）；「检查更新」改为多源并发探测，并校验候选版本确实存在于上游，更新更可靠。
+changelog=桌面入口直达 Alas 配置界面（去掉未启用的前端托管与多余跳转）；「检查更新」的版本真值改取官方提交列表（与提交历史同源），镜像只在官方接口不可达时按顺序兜底，避免过期镜像被当成最新。
