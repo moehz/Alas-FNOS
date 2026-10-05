@@ -23,3 +23,6 @@ fnos-app/app/alas_version.json
 
 # 打包输出
 dist/
+
+# AI 工程侧资产（fnOS 开发 Skill）。随项目目录走，但不属于发布内容
+.trae/

@@ -144,7 +144,7 @@ mkdir -p "$APP" "$DIST_OUT"
 VALIDATOR="${VALIDATOR:-}"
 if [ -z "$VALIDATOR" ]; then
   for cand in "$HERE/tools/validate_fnos_project.py" \
-              "$HERE/../.trae/skills/fnos-developer/scripts/validate_fnos_project.py"; do
+              "$HERE/.trae/skills/fnos-developer/scripts/validate_fnos_project.py"; do
     if [ -f "$cand" ]; then VALIDATOR="$cand"; break; fi
   done
 fi
