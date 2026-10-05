@@ -29,6 +29,19 @@
 于是上游的按钮、进度提示、失败处理，以及基于 ``EnableReload`` 的「更新后自动重启」全部
 原样生效，而我们既不需要 git，也不需要写安装目录。
 
+更新来源与校验
+--------------
+版本探测**并发**请求多个端点（官方 GitHub API 在前，国内镜像在后），先返回者胜出；
+因此镜像只影响速度，不影响最坏耗时。镜像返回的 commit 必须通过官方接口确认确实存在
+于上游，被官方明确否认时本次「检查更新」直接报失败，而不是把一个来源可疑的 commit
+写进本地记录。
+
+下载到的源码包还有两道闸：包名必须以请求的 commit 结尾（``<repo>-<sha>``）；解压时拒绝
+``..``、指向外部的链接与设备/FIFO 成员。这两道闸保证「下载源被换掉」也不会让更新落到
+别的代码上。
+
+端点列表可用 ``ALAS_FNOS_LATEST_URLS`` / ``ALAS_FNOS_TARBALL_URLS``（逗号或空白分隔）覆盖。
+
 运行时布局
 ----------
     $TRIM_PKGVAR/alas                 实际使用的源码树（可写，也就是 Alas 的 cwd）
@@ -44,12 +57,15 @@
 
 import json
 import os
+import queue
+import re
 import shutil
 import ssl
 import sys
 import tarfile
 import threading
 import time
+import urllib.error
 import urllib.request
 
 __all__ = ["install"]
@@ -60,17 +76,22 @@ USER_AGENT = "AlasFnosUpdater/1.0"
 
 GITHUB_API = "https://api.github.com/repos/" + REPO
 
-#: 版本探测端点，按顺序回退（国内 CDN 优先；实测匿名可访问且与上游 master 实时同步）。
-#: 后两项是 GitHub 官方 API，响应形状不同，由 :func:`_parse_latest` 统一解析。
+#: 官方版本端点（版本真值，同时也是交叉校验的依据）
+OFFICIAL_LATEST = GITHUB_API + "/branches/" + BRANCH
+
+#: 版本探测端点。官方在前、镜像在后；实际是并发探测、先到先得，顺序只决定「同样快时
+#: 优先谁」。后两项是经 GitHub 代理的官方 API，响应形状与官方一致。
+#: 可用 ALAS_FNOS_LATEST_URLS 覆盖（逗号或空白分隔）。
 LATEST_URLS = (
+    OFFICIAL_LATEST,
     "https://1818706573.cdn.123clouddisk.com/1818706573/pack/LmeSzinc_AzurLaneAutoScript_master/latest.json",
     "https://alas-goc-1254325529.cos.ap-shanghai.myqcloud.com/LmeSzinc_AzurLaneAutoScript_master/latest.json",
-    GITHUB_API + "/branches/" + BRANCH,
-    "https://ghfast.top/" + GITHUB_API + "/branches/" + BRANCH,
-    "https://gh-proxy.com/" + GITHUB_API + "/branches/" + BRANCH,
+    "https://ghfast.top/" + OFFICIAL_LATEST,
+    "https://gh-proxy.com/" + OFFICIAL_LATEST,
 )
 
-#: 源码包下载源，按顺序回退（后者为国内加速镜像）
+#: 源码包下载源，**串行**回退（官方 codeload 在前；镜像只用于加速）。
+#: 可用 ALAS_FNOS_TARBALL_URLS 覆盖。
 TARBALL_URLS = (
     "https://codeload.github.com/{repo}/tar.gz/{ref}",
     "https://ghfast.top/https://github.com/{repo}/archive/{ref}.tar.gz",
@@ -92,8 +113,13 @@ _UPDATER_MODULE = "module.webui.updater"
 _PROC_DIR = "/proc"
 _REMOTE_TTL = 300.0
 _HTTP_TIMEOUT = 20
+_VERIFY_TIMEOUT = 8
 _DOWNLOAD_TIMEOUT = 60
 _CHUNK = 256 * 1024
+
+#: 版本端点的返回值只接受 hex SHA：分支名、路径或任何其它字符串一律丢弃，
+#: 避免把不可控内容拼进后面的下载 URL。
+_SHA_RE = re.compile(r"^[0-9a-fA-F]{7,40}$")
 
 _state_lock = threading.Lock()
 _pkgvar_cache = None
@@ -260,6 +286,54 @@ def _http_download(url, path, timeout=_DOWNLOAD_TIMEOUT):
 # --------------------------------------------------------------------------- #
 
 
+def _env_urls(name, defaults):
+    """端点列表：``$<name>`` 可覆盖默认值（逗号或空白分隔），为空则回落默认。"""
+    raw = os.environ.get(name)
+    if not raw:
+        return tuple(defaults)
+    items = tuple(part.strip() for part in raw.replace(",", " ").split() if part.strip())
+    return items or tuple(defaults)
+
+
+def latest_urls():
+    return _env_urls("ALAS_FNOS_LATEST_URLS", LATEST_URLS)
+
+
+def tarball_urls():
+    return _env_urls("ALAS_FNOS_TARBALL_URLS", TARBALL_URLS)
+
+
+def _valid_commit(value):
+    return bool(value) and bool(_SHA_RE.match(value))
+
+
+def _probe_first(urls, fetch, timeout):
+    """并发请求多个端点，返回第一个成功的结果；全部失败返回 ``(None, None)``。
+
+    串行回退的最坏耗时是「端点数 × 超时」，并发后只剩一个超时窗口。每个 worker
+    无论成功还是抛异常都只投递一次结果，所以 ``results.get()`` 不会空等。
+    """
+    results = queue.Queue()
+
+    def worker(url):
+        try:
+            results.put((True, url, fetch(url, timeout)))
+        except Exception as exc:
+            _log("端点探测失败 %s：%r" % (url, exc))
+            results.put((False, url, None))
+
+    for url in urls:
+        thread = threading.Thread(target=worker, args=(url,), name="alas-fnos-probe")
+        thread.daemon = True
+        thread.start()
+
+    for _ in urls:
+        ok, url, value = results.get()
+        if ok:
+            return value, url
+    return None, None
+
+
 def _parse_latest(data):
     """解析版本探测响应，返回 ``(commit, time)``。
 
@@ -292,16 +366,46 @@ def _parse_latest(data):
 
 
 def fetch_latest():
-    """探测上游最新版本，返回 ``(commit, time)``，全部端点失败返回 ``(None, None)``。"""
-    for url in LATEST_URLS:
-        try:
-            info = _parse_latest(json.loads(_http_get(url, _HTTP_TIMEOUT).decode("utf-8")))
-            commit = (info[0] or "").strip()
-            if commit:
-                return commit, info[1]
-        except Exception as exc:
-            _log("latest.json 获取失败 %s: %r" % (url, exc))
-    return None, None
+    """并发探测上游最新版本，返回 ``(commit, time, source)``。
+
+    全部端点失败返回 ``(None, None, None)``。非 SHA 的返回值按失败处理（不计入候选），
+    所以镜像即使返回分支名或别的字符串也不会被采信。
+    """
+
+    def probe(url, timeout):
+        commit, stamp = _parse_latest(json.loads(_http_get(url, timeout).decode("utf-8")))
+        commit = (commit or "").strip()
+        if not _valid_commit(commit):
+            raise ValueError("commit 非法：%r" % (commit,))
+        return commit, stamp
+
+    info, source = _probe_first(latest_urls(), probe, _HTTP_TIMEOUT)
+    if not info:
+        return None, None, None
+    return info[0], info[1], source
+
+
+def verify_commit(commit):
+    """用官方接口确认 commit 确实存在于上游。
+
+    返回 ``True``（官方确认）/ ``False``（官方明确否认）/ ``None``（不可达，无法判定）。
+    只有「明确否认」才拒绝：国内访问不到官方接口时，不能被误判成「版本不存在」。
+    """
+    if not _valid_commit(commit):
+        return False
+    url = "%s/commits/%s" % (GITHUB_API, commit)
+    try:
+        _http_get(url, _VERIFY_TIMEOUT)
+        return True
+    except urllib.error.HTTPError as exc:
+        if exc.code in (404, 422):
+            _log("官方接口否认该 commit：%s（HTTP %s）" % (commit[:8], exc.code))
+            return False
+        _log("官方接口校验返回 HTTP %s，本次不作判定" % exc.code)
+        return None
+    except Exception as exc:
+        _log("官方接口不可达（%r），本次不作判定" % (exc,))
+        return None
 
 
 def _fetch_github_commits(limit=20):
@@ -338,9 +442,15 @@ def fetch_remote(force=False):
         if not force and cached and now - _remote_cache["at"] < _REMOTE_TTL:
             return cached, list(_remote_cache["history"])
 
-    commit, commit_time = fetch_latest()
+    commit, commit_time, source = fetch_latest()
     info = None
     history = []
+    if commit:
+        if source and source != OFFICIAL_LATEST:
+            _log("上游版本来自镜像 %s：%s" % (source, commit[:8]))
+        if verify_commit(commit) is False:
+            _log("上游版本 %s 未获官方确认，本次丢弃该结果" % commit[:8])
+            commit = ""
     if commit:
         info = (commit, "", commit_time or "", "")
         history = _fetch_github_commits()
@@ -410,7 +520,8 @@ def check_update(self):
 
     if not remote:
         _log(
-            "检查更新失败：无法获取上游版本（网络不可达或证书校验失败），本次不作判断"
+            "检查更新失败：无法获取可信的上游版本"
+            "（网络不可达、证书校验失败，或该 commit 未获官方接口确认），本次不作判断"
         )
         return "failed"
     if not local:
@@ -439,7 +550,7 @@ def git_install(self):
     remote = (info[0] if info else "") or ""
 
     if not remote:
-        raise ExecutionError("无法获取上游版本信息（网络或证书问题），更新中止")
+        raise ExecutionError("无法获取可信的上游版本信息（网络/证书问题，或官方校验未通过），更新中止")
     if local and local == remote:
         _log("已是最新（%s），无需更新" % remote[:8])
         return
@@ -477,14 +588,14 @@ def _download_and_extract(commit):
     archive = os.path.join(var, ".alas-download.tar.gz")
     last_error = None
 
-    for template in TARBALL_URLS:
+    for template in tarball_urls():
         url = template.format(repo=REPO, ref=commit)
         shutil.rmtree(staging, ignore_errors=True)
         os.makedirs(staging)
         try:
             _log("下载源码包：%s" % url)
             _http_download(url, archive)
-            _extract(archive, staging)
+            _extract(archive, staging, commit)
             _log(
                 "源码包就绪：%s（%.1f MB）"
                 % (staging, _tree_size(staging) / 1024.0 / 1024.0)
@@ -512,11 +623,20 @@ def _top_level(members):
     raise RuntimeError("源码包结构异常：找不到顶层目录")
 
 
-def _extract(archive, destination):
-    """解压源码包并剥掉顶层目录；拒绝越界路径与指向外部的链接。"""
+def _extract(archive, destination, commit=""):
+    """解压源码包并剥掉顶层目录；拒绝越界路径、外部链接与特殊文件。
+
+    顶层目录必须对应本次请求的 commit（GitHub 的包名形如 ``<repo>-<sha>``）：
+    这样即便下载源被换成了缓存或镜像，也无法把一个「别的版本」的包塞进更新流程。
+    """
     with tarfile.open(archive, "r:gz") as tar:
         members = tar.getmembers()
         prefix = _top_level(members)
+        suffix = prefix.rstrip("/").rsplit("-", 1)[-1]
+        if commit and not (suffix == commit or suffix.startswith(commit)):
+            raise RuntimeError(
+                "源码包与请求的版本不符：包内 %s / 请求 %s" % (suffix[:12], commit[:12])
+            )
         for member in members:
             if not member.name.startswith(prefix):
                 continue
@@ -525,6 +645,9 @@ def _extract(archive, destination):
                 continue
             parts = relative.split("/")
             if ".." in parts:
+                continue
+            # 设备文件 / FIFO：源码包不该有，直接丢弃
+            if member.isdev() or member.isfifo():
                 continue
             if member.issym() or member.islnk():
                 target = (member.linkname or "").replace("\\", "/")
