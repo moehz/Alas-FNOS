@@ -7,7 +7,8 @@
 runtime/dist/
 
 # Alas 源码检出（按 docs/构建指南.md 自行 clone，不入库）
-.alas/
+# 也允许用 `.alas` 软链指到本地 Alas 检出，构建脚本会优先用它，零参数即可打包
+.alas
 
 # fnpack 打包器（第三方二进制，按构建指南自行获取）
 tools/fnpack
@@ -16,7 +17,6 @@ tools/fnpack
 fnos-app/app/alas/
 fnos-app/app/runtime/
 fnos-app/app/server/
-fnos-app/app/console/
 fnos-app/app/patch/
 fnos-app/app/bin/
 fnos-app/app/alas_version.json
