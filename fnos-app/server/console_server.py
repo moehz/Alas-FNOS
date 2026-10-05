@@ -7,7 +7,11 @@ ALAS 飞牛 fnOS 控制台后端（阶段2）。
   1. 监听 "${TRIM_APPDEST}/app.sock"，由 fnOS 统一网关注入登录态后转发。
   2. 控制面 API：状态 / 启动 / 停止 / 日志，用打包内的可移植 CPython 3.7 起停 Alas。
   3. 反代 Alas 的 PyWebIO 配置界面："{prefix}/alas/*" -> 127.0.0.1:<port>（含 WebSocket）。
-  4. 托管阶段3 的前端产物 "${TRIM_APPDEST}/console/dist"。
+  4. 其余一切路径（应用根、任意子路径）一律 308 到 "{prefix}/alas/"。
+
+本应用**不自带前端**：桌面入口点开即落到 Alas 自己的配置界面。因此这里没有任何静态
+文件托管，也没有 SPA 回退 —— 只保留控制面 API 与反代两条路由，缩小暴露面。
+控制面 API 只校验网关注入的登录态（X-Trim-Userid），不区分管理员。
 
 数据落盘与脚本热更新：
   Alas 源码树运行在 "$TRIM_PKGVAR/alas"（可写），安装目录里的 alas 只作「出厂种子」。
@@ -24,7 +28,6 @@ import argparse
 import asyncio
 import http.client
 import json
-import mimetypes
 import os
 import re
 import shutil
@@ -66,8 +69,8 @@ FORCED_DEPLOY = {
     "Password": "null",
 }
 
-# 阶段 3 前端就位前，缺 console/dist 时直接 308 跳到 Alas 配置界面（/alas/），
-# 使桌面入口无需手动补 /alas 即可进入（详见 HANDOFF R6）。前端就位后此分支自然失效。
+# 应用根与任何未匹配的路径一律 308 到 {prefix}/alas/：桌面入口的 url 只写 /app/<appname>，
+# 点开即进入 Alas 配置界面，无需使用者手动补 /alas。
 
 
 def log(msg):
@@ -105,9 +108,6 @@ class Context:
         )
         self.socket_path = os.path.abspath(
             args.socket or os.environ.get("ALAS_FNOS_SOCK") or os.path.join(self.appdest, "app.sock")
-        )
-        self.console_dist = os.path.abspath(
-            args.console_dist or os.path.join(self.appdest, "console", "dist")
         )
         self.runtime = os.path.join(self.appdest, "runtime")
         self.python = os.path.join(self.runtime, "bin", "python3.7")
@@ -572,7 +572,8 @@ class ConsoleApp:
         elif path == ctx.alas_path or path.startswith(ctx.alas_path + "/"):
             await self.proxy_http(scope, receive, send)
         else:
-            await self.static(scope, send, path)
+            # 本应用不自带前端：应用根与任意未匹配路径一律落到 Alas 配置界面
+            await self.redirect(send, ctx.alas_path + "/")
 
     async def api(self, scope, receive, send):
         ctx = self.ctx
@@ -608,52 +609,6 @@ class ConsoleApp:
             await self.send_json(send, 500 if error else 200, {"error": error} if error else status)
         else:
             await self.send_json(send, 404, {"error": "not_found", "route": route})
-
-    async def static(self, scope, send, path):
-        ctx = self.ctx
-        if scope["method"] != "GET" and scope["method"] != "HEAD":
-            await self.send_json(send, 405, {"error": "method_not_allowed"})
-            return
-        if path == ctx.prefix:
-            await self.redirect(send, ctx.prefix + "/")
-            return
-
-        rel = path[len(ctx.prefix):].lstrip("/")
-        target = self._safe_join(ctx.console_dist, rel)
-        if target is None or not os.path.isfile(target):
-            # SPA 回退到 index.html
-            index = os.path.join(ctx.console_dist, "index.html")
-            if os.path.isfile(index):
-                target = index
-            else:
-                # 无前端产物：直接进 Alas 配置界面（阶段 3 前端就位前保证桌面入口可用）
-                await self.redirect(send, ctx.alas_path + "/")
-                return
-
-        with open(target, "rb") as f:
-            body = f.read()
-        ctype = mimetypes.guess_type(target)[0] or "application/octet-stream"
-        if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
-            ctype += "; charset=utf-8"
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [
-                    (b"content-type", ctype.encode()),
-                    (b"content-length", str(len(body)).encode()),
-                ],
-            }
-        )
-        await send({"type": "http.response.body", "body": b"" if scope["method"] == "HEAD" else body})
-
-    @staticmethod
-    def _safe_join(root, rel):
-        root = os.path.realpath(root)
-        target = os.path.realpath(os.path.join(root, rel))
-        if target == root or target.startswith(root + os.sep):
-            return target
-        return None
 
     async def redirect(self, send, location):
         await send(
@@ -800,7 +755,6 @@ def main():
     parser.add_argument("--pkgetc")
     parser.add_argument("--pkgvar")
     parser.add_argument("--socket")
-    parser.add_argument("--console-dist")
     parser.add_argument("--port", type=int)
     parser.add_argument("--autostart")
     parser.add_argument("--prepare", action="store_true", help="只做准备工作后退出")

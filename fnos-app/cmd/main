@@ -16,7 +16,6 @@ PKGETC="${TRIM_PKGETC:-$APPDEST/etc}"
 PY="$APPDEST/runtime/bin/python3.7"
 SERVER="$APPDEST/server/console_server.py"
 SOCKET="$APPDEST/app.sock"
-CONSOLE_DIST="$APPDEST/console/dist"
 PORT="${TRIM_SERVICE_PORT:-22267}"
 
 CONSOLE_PID_FILE="$PKGVAR/console.pid"
@@ -67,7 +66,6 @@ start_app() {
     --pkgetc "$PKGETC" \
     --pkgvar "$PKGVAR" \
     --socket "$SOCKET" \
-    --console-dist "$CONSOLE_DIST" \
     --port "$PORT" \
     --autostart true \
     >>"$CONSOLE_LOG" 2>&1 &
