@@ -22,21 +22,56 @@ CONSOLE_PID_FILE="$PKGVAR/console.pid"
 CONSOLE_LOG="$PKGVAR/console.log"
 ALAS_PID_FILE="$PKGVAR/alas.pid"
 
+# console.log 只追加，7x24 跑下来会无限增长；启动前按大小滚一代（占用上界 ≈ 2×）
+CONSOLE_LOG_MAX_BYTES=$((16 * 1024 * 1024))
+
 fail() {
   echo "$*" >&2
   [ -n "${TRIM_TEMP_LOGFILE:-}" ] && echo "$*" >>"${TRIM_TEMP_LOGFILE}"
   return 1
 }
 
-# 读取 PID 文件中的 PID（同行可带 '|额外字段'）；进程存活则输出 PID，否则返回 1
+# PID 是否确属本应用：0=是，1=确定不是（PID 被复用），2=判不出来
+pid_is_ours() {
+  local pid="$1" cmd
+  [ -r "/proc/$pid/cmdline" ] || return 2
+  cmd="$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)"
+  [ -n "$cmd" ] || return 2
+  case "$cmd" in
+    *"$APPDEST"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 读取 PID 文件中的 PID（同行可带 '|额外字段'）；进程存活**且确属本应用**才输出。
+# 判不出来时按存活处理：宁可多重启一次，也不要因为探针读不到 /proc 就误判成
+# 「没在运行」而漏掉升级后的重启（那正是 R20 的老问题）。
 read_live_pid() {
-  local file="$1" pid
+  local file="$1" pid ours=0
   [ -f "$file" ] || return 1
   pid="$(head -n1 "$file" 2>/dev/null | cut -d'|' -f1)"
   [ -n "$pid" ] || return 1
   case "$pid" in *[!0-9]*) return 1 ;; esac
   kill -0 "$pid" 2>/dev/null || return 1
+  pid_is_ours "$pid" || ours=$?
+  if [ "$ours" -eq 1 ]; then
+    echo "PID ${pid} 已不属于本应用（PID 复用），按未运行处理" >&2
+    return 1
+  fi
   printf '%s' "$pid"
+}
+
+# 启动前轮转 console.log
+rotate_console_log() {
+  [ -f "$CONSOLE_LOG" ] || return 0
+  local size
+  # tr 去空白是必须的：BSD/macOS 的 `wc -c` 会输出前导空格，直接丢给
+  # `case ... *[!0-9]*` 会被当成非数字，于是阈值判定永远不成立、轮转静默失效。
+  size="$(wc -c <"$CONSOLE_LOG" 2>/dev/null | tr -d '[:space:]')"
+  case "$size" in ''|*[!0-9]*) size=0 ;; esac
+  [ "$size" -gt "$CONSOLE_LOG_MAX_BYTES" ] || return 0
+  rm -f "${CONSOLE_LOG}.1" 2>/dev/null || true
+  mv -f "$CONSOLE_LOG" "${CONSOLE_LOG}.1" 2>/dev/null || true
 }
 
 is_running() {
@@ -53,6 +88,7 @@ start_app() {
 
   mkdir -p "$PKGVAR" || { fail "无法创建数据目录：$PKGVAR"; return 1; }
   rm -f "$CONSOLE_PID_FILE" "$SOCKET"
+  rotate_console_log
 
   # 运行时的 OpenSSL 等库在 <runtime>/lib，必须导出后才可 import uvicorn
   export LD_LIBRARY_PATH="$APPDEST/runtime/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -90,9 +126,14 @@ start_app() {
 
 # 停止一个进程（可选按进程组）：$1=PID
 terminate_pid() {
-  local pid="$1" timeout="${2:-20}" i=0
+  local pid="$1" timeout="${2:-20}" i=0 ours=0
   [ -n "$pid" ] || return 0
   kill -0 "$pid" 2>/dev/null || return 0
+  pid_is_ours "$pid" || ours=$?
+  if [ "$ours" -eq 1 ]; then
+    echo "放弃停止 PID ${pid}：它已不属于本应用（PID 复用）" >&2
+    return 0
+  fi
 
   kill -TERM "$pid" 2>/dev/null || true
   while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$timeout" ]; do
@@ -106,9 +147,15 @@ terminate_pid() {
 
 # Alas 由 console_server 以 start_new_session 启动，是进程组组长
 terminate_group() {
-  local pid="$1" timeout="${2:-20}" i=0
+  local pid="$1" timeout="${2:-20}" i=0 ours=0
   [ -n "$pid" ] || return 0
   kill -0 "$pid" 2>/dev/null || return 0
+  # killpg 会连带整个进程组，误判的代价比单进程大得多，所以这里必须确认归属
+  pid_is_ours "$pid" || ours=$?
+  if [ "$ours" -eq 1 ]; then
+    echo "放弃停止进程组 ${pid}：组长已不属于本应用（PID 复用）" >&2
+    return 0
+  fi
 
   kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
   while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$timeout" ]; do
