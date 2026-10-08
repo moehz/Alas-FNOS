@@ -26,7 +26,8 @@
 > 旧 `azurlaneautoscript` 包从未公开发布，公开用户无升级路径问题，Release 说明不必提。
 > 开发机上的旧包须先卸载（数据默认保留，不自动迁移）。真机复测：**1.2.0 已装并进应用信息页**，
 > 剩余项待复测；首发前补了 `distributor` 字段（「发布者」不再为空，见 4.15.1）。
-> 遗留可选项：22267 端口监听者身份校验加固（见 4.12.8 末尾）。
+> 遗留在案的 22267 监听者身份校验**已于 2026-10-05 实现**（见 4.16），
+> 同时补了日志封顶、`tail_log` 尾读、PID 归属校验与 `$TRIM_PKGHOME`，待打包 1.2.2 后真机复测。
 
 ---
 
@@ -1121,6 +1122,10 @@ ps -ef | grep 'gui\.py' | grep -v grep          # 应只剩 azurlan+ 的新进�
 身份——若占用者 cmdline 不含本包 `$TRIM_PKGVAR`/runtime 路径，明确报错并在控制台
 提示「端口被外部进程占用（root 僵尸 gui.py）」，而不是静默反代到老进程。
 
+> ✅ **已实现（2026-10-05）**：见 **4.16**。实现上比这里的设想更强一点——先看
+> `/proc/net/tcp` 里 LISTEN socket 的 **uid**，所以连「占用者是 root、我们根本读不到
+> 它的 `/proc/<pid>`」这种情况也能判定出来（这正是 4.12.8 的原始场景）。
+
 #### 4.12.9 真机第三轮：更新收尾 FileNotFoundError（1.0.6 修复）
 
 装 1.0.5 后行为符合预期（面板 `01c0a010/77f4d01f`），点「立即更新」：下载、换树
@@ -1318,6 +1323,68 @@ adb 零配置、卸载清理。补 `distributor` 后的包**尚未真机复测**
 
 ---
 
+### 4.16 加固包（2026-10-05，未发布，待打包 1.2.2）
+
+一次「只看不做假动作」的加固，全部落在 `fnos-app/` 源码内，**不动 runtime、不改装配流程**。
+起因是复查时发现 4.12.8 那条遗留加固项至今没实现，顺带查出一批 7x24 场景下的隐患。
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | **反代不问对面是谁**（4.12.8 遗留项）：`webui_reachable()` 只测端口通不通，`proxy_http` 直接转发 → root 僵尸 `gui.py` 占着 22267 时，网关照旧把请求反代给老代码 | 新增 `listener_owner()`：先读 `/proc/net/tcp` 拿 LISTEN socket 的 **uid**（socket 属主，**不需要读占用者的 `/proc/<pid>`**，这正是 4.12.8 里读不到的），uid 不同即判定 `foreign`；uid 相同再定位 pid，查 `cmdline`/`cwd` 归属。命中 `foreign` 时 HTTP 返回 503 说明页、WS 关闭 1011、`start_alas` 直接拒绝启动 |
+| 2 | **日志无上限**：`alas.log`（含 uvicorn 每请求 access log）、`console.log` 只追加；ALAS 自己的 `log/*.txt` 上游只增不减 | `alas.log`/`console.log` 启动前按 16 MB 滚一代（占用上界 ≈ 2×）；`$PKGVAR/log` 总量超过 `ALAS_FNOS_LOG_MAX_MB`（默认 512，设 0 关闭）时从最旧开始删 |
+| 3 | **`tail_log` 读整个文件**：`deque(f, maxlen)` 内存有界但 I/O 是 O(文件大小) | 改成从尾部 seek 往回读；2.8 MB 日志实测 **2,800,012 B → 8,192 B（342×）**，且差距随文件增大线性拉大 |
+| 4 | **PID 复用会误杀**：`read_pid()` 存了 `start_ts` 却从没用过，`stop_alas` 直接 `killpg`；`cmd/main` 同样 | 动手前校验 `/proc/<pid>/cmdline` 是否含本包路径；**判不出来（无 `/proc`）一律按原逻辑继续**，免得探针本身变成新故障源 |
+| 5 | 平台给的 `TRIM_PKGHOME` 没用上，adb 的 HOME 靠自造路径 | 优先级改为 `$TRIM_PKGHOME` → `<appdest>/home` → `$PKGVAR/home` |
+| 6 | `build_fpk.sh` 第 338 行仍有 R19 的 `$FNPACK（` 写法（原以为全仓修完了） | 补成 `${FNPACK}` |
+
+**判定口径（有意保守）**：`listener_owner()` 返回 `ours` / `foreign` / `none` / `unknown`，
+**只有 `foreign` 才拦截**；`unknown`（`/proc` 读不到、同 uid 但定位不到进程）一律放行 ——
+宁可漏判一次，也不能让探针把正常服务掐了。判定结果缓存 5 s（反代是热路径），
+拒绝日志按 key 限流 120 s，避免 7x24 刷屏。
+
+**离线自测（已随仓库分发，共 61 项全绿）**：
+
+```bash
+python3 tools/selftest-console_server.py    # 45 项
+bash    tools/selftest-cmd-main.sh          # 16 项
+```
+
+两个脚本都**不需要 fnOS、不需要 Linux**：监听者判定那部分是靠一棵**假的 `/proc` 树**
+（`$PROC_ROOT` + 假 `cmdline`/`cwd`/`net/tcp`）把 Linux 才走的分支喂出来的，
+所以在开发机（macOS）上就能跑。之所以要固化进仓库：本文档 4.9.8 / 4.12.5 等多处
+引用「离线自测 N 项全绿」却从来没有对应脚本，等于不可复现 —— 别再写没有脚本的自测数字。
+
+覆盖到的断言：
+
+- 假 `/proc/net/tcp` 造出 4.12.8 的场景（`uid=0` 占 22267）→ 判为 `foreign`，**且不需要读它的 `/proc`**
+- 同 uid + `cmdline` 命中本包 → `ours`（放行）；同 uid + `cmdline` 不匹配 → `foreign`（拦截）
+- 同 uid 但 fd 不可读 → `unknown`（放行）；`cwd` 为 `(deleted)` → `foreign`
+- 无监听者 → `none`（放行，让上游 502 自然暴露）；`/proc` 整体不可读 → `unknown`
+- TTL 缓存生效；`listen_sockets` 按 16 进制比端口、只认 `LISTEN`
+- `tail_log`：末 N 行、无尾换行、空文件、坏字节、5000 行上限，以及**「读取量 < 64 KB」的 I/O 断言**
+- `rotate_log` / `prune_log_dir`：阈值、上一代覆盖、0/负值关闭、垃圾阈值、目录缺失
+- `cmd/main`：`pid_is_ours` 三态、`read_live_pid` 拒绝被复用的 PID、`cmdline` 读不到时按存活处理（不破坏 R20 的升级重启）、`terminate_*` 对无关进程**不发任何信号**、console.log 轮转
+- 顺带修掉一个**测出来的真 bug**：BSD/macOS 的 `wc -c` 会输出前导空格，`case ... *[!0-9]*` 会据此把大小当成非数字 → 阈值判定永不成立、轮转静默失效。已加 `tr -d '[:space:]'`
+
+**真机仍需复测**（这批改动全部依赖 Linux `/proc`，本机只能验证降级路径）：
+
+1. 正常启动后打开面板：`console.log` 应出现 `HOME 采用 …`，且 `state` 为 `running`
+2. **重点**：故意制造端口冲突（`python -c "import socket;s=socket.socket();s.bind(('127.0.0.1',22267));s.listen()"` 以另一个 uid 跑），
+   再点应用启动 → 应看到 503 说明页 + `console.log` 的「拒绝反代」告警，而**不是**转发到占用者
+3. `$PKGVAR/alas.log` 超过 16 MB 后重启 → 应出现 `alas.log.1`
+4. 把 `ALAS_FNOS_LOG_MAX_MB=1` 后启动 → `$PKGVAR/log` 应被压到 1 MB 内并在日志里留痕
+5. adb 仍能 `DETECT DEVICE`（HOME 换成了 `$TRIM_PKGHOME`）
+
+**版本**：**随 1.2.1 一起发**（2026-10-05 决定）。当时 1.2.1 尚未推送——
+`origin/main` 落后本地 7 个提交、tag 只有 `v1.2.0`，也就是 1.2.1 从没发布过，
+所以同一个版本号重打包不存在「同版本不同二进制」的问题。旧产物已留底在
+`dist/alas-fnos_1.2.1.prev-31956732.fpk`（对应 HEAD=`6dedf49`，可删）。
+
+> ⚠️ **下次别再这么干**：一旦某个版本号已经推上去/发过 Release，就不能再用它重打包，
+> 必须跳版本。判断依据：`git branch -vv` 看 `origin/main` 是否领先、`git tag -l` 看有没有 tag。
+
+---
+
 ## 五、潜在风险与未解决问题
 
 | 编号 | 风险 / 问题 | 状态 | 说明 / 建议 |
@@ -1340,7 +1407,7 @@ adb 零配置、卸载清理。补 `distributor` 后的包**尚未真机复测**
 | **R16** | `$TRIM_PKGVAR` 空间占用 | ⏳ 待真机确认 | 更新需临时约 **240 MB**（源码包 87.8 MB + 暂存树 ~150 MB），`_prune` 随后回收；平时保留一份 `.alas-prev-*`（约 150 MB）+ 运行树（约 150 MB）。若设备卷太小需提示用户，或改为更新后不留 prev |
 | **R17** | 上游更新面板的 20 条历史依赖 GitHub API | ⏳ 可接受 | `api.github.com/.../commits` 一次约 3.1 MB；失败只记日志、返回空列表，**不影响更新功能**，仅历史表为空 |
 | **R18** | `wizard/uninstall` 清数据的路径护栏 | ✅ 已加固 | 拒绝 `""`/`/`/`/var`/`/usr`/`/vol`/`/vol1`/`/vol2`；只删应用自管条目，不整目录删。已测 8 条分支全绿 |
-| **R19** | **`$VAR` 紧邻中文会让 bash 报 `unbound variable`** | ✅ **已全仓修掉** | macOS 自带 **bash 3.2.57**，在 UTF-8 环境下会把多字节字符的**前导字节吞进变量名**：`"$FOO，"` 被解析成变量 `FOO\xef` → `set -u` 下直接退出。**规则：`$VAR` 后面紧跟中文（或任何非 ASCII）时必须写 `${VAR}`。** 本次实测踩中：`build_fpk.sh` 装配 alas 前的 `say` 行（`--skip-alas` 预演恰好跳过该行，所以第一次没暴露）。全仓扫描后共修 7 处可执行行（`build_fpk.sh`、`github-repo/build_fpk.sh` ×2、`tools/cleanup-probes.sh` ×2、`runtime/smoke.sh` ×2），**全在报错分支**，平时不触发、真出事时才炸。`github-repo/build_fpk.sh` 的 `[ -d "$ALAS_SRC/.git" ]` 一并改为 `git rev-parse --git-dir`（兼容 worktree，其 `.git` 是文件） |
+| **R19** | **`$VAR` 紧邻中文会让 bash 报 `unbound variable`** | ✅ **已全仓修掉（含 2026-10-05 补漏）** | macOS 自带 **bash 3.2.57**，在 UTF-8 环境下会把多字节字符的**前导字节吞进变量名**：`"$FOO，"` 被解析成变量 `FOO\xef` → `set -u` 下直接退出。**规则：`$VAR` 后面紧跟中文（或任何非 ASCII）时必须写 `${VAR}`。** 本次实测踩中：`build_fpk.sh` 装配 alas 前的 `say` 行（`--skip-alas` 预演恰好跳过该行，所以第一次没暴露）。全仓扫描后共修 7 处可执行行（`build_fpk.sh`、`github-repo/build_fpk.sh` ×2、`tools/cleanup-probes.sh` ×2、`runtime/smoke.sh` ×2），**全在报错分支**，平时不触发、真出事时才炸。`github-repo/build_fpk.sh` 的 `[ -d "$ALAS_SRC/.git" ]` 一并改为 `git rev-parse --git-dir`（兼容 worktree，其 `.git` 是文件）。**2026-10-05 复查发现 `build_fpk.sh:338` 的 `"$FNPACK（见 docs/构建指南.md）"` 仍违规**（同样是「fnpack 缺失」这条真出事才走的报错分支），已补成 `${FNPACK}`；现全仓可执行行扫描为 0 处 |
 
 | **R20** | **升级后未重启 → 新包不生效（跑的还是旧代码）** | ✅ **已修复（1.0.4）** | 平台替换 `<target>` 全部文件后不保证重启应用；老进程继续跑就还是旧代码、读旧版本记录，表现为「装了新包却还是旧行为」。`cmd/upgrade_init` 留 `.upgrade-restart-pending` 标记、`cmd/upgrade_callback` 停旧进程并用新代码拉起。见 4.12.3 |
 | **R21** | **捆绑运行时没有系统 CA，HTTPS 可能整体失败** | ✅ **已修复（1.0.4）** | `runtime/dist` 内无 `/etc/ssl/certs`，只有 `site-packages/certifi/cacert.pem`，而标准库 `urllib` 不读 certifi。缺 CA 的机器上所有 HTTPS 都会证书报错。改为显式用 certifi 建 `SSLContext`。见 4.12.3 |
@@ -1349,6 +1416,17 @@ adb 零配置、卸载清理。补 `distributor` 后的包**尚未真机复测**
 | **R24** | **版本探测：延迟与新鲜度无关（1.2.1 已改）** | ✅ **已修（1.2.1）** | 2026-10-03 实测 GOC `latest.json` 停在 `77f4d01f` 而 GitHub master 已是 `b9a965ce`；旧实现串行取第一个可用源、把 GOC 排在前面，面板就跟随这个过期值。**1.2.1 起**：版本真值取官方提交列表第一行（与「详细提交历史」同源），镜像只在官方接口不可达时按顺序兜底。**不要改成并发抢答**——2026-10-05 实测 GOC COS 0.18 s、123clouddisk 0.20 s，只快 20 ms 的过期源会把正确版本顶掉 |
 
 **已解决、无需再踩的坑**：`av` 编译失败、`pywin32` 无 Linux 分发、`libssl.so.3` 缺失、`/alas` 308、`git fetch` 每 5 分钟失败。
+
+**4.16 新增/关闭的风险**（2026-10-05，待 1.2.2 真机复测）：
+
+| 编号 | 风险 / 问题 | 状态 | 说明 |
+|---|---|---|---|
+| **R25** | **端口监听者冒充**（4.12.8 遗留项） | ✅ **已加固（4.16）** | 反代前判定 22267 监听者归属，`foreign` 时 503/关闭 WS/拒绝启动。判定不出来一律放行（保守） |
+| **R26** | **日志无上限增长** | ✅ **已加固（4.16）** | `alas.log`/`console.log` 16 MB 滚一代；`$PKGVAR/log` 超 `ALAS_FNOS_LOG_MAX_MB`（默认 512 MB，0=关闭）删最旧 |
+| **R27** | **PID 复用导致误杀无关进程组** | ✅ **已加固（4.16）** | `console_server` 与 `cmd/main` 动手前都校验 `/proc/<pid>/cmdline`；读不到时按原逻辑继续（不破坏 R20） |
+| **R28** | `tail_log` 的 I/O 随日志大小线性增长 | ✅ **已修（4.16）** | 改为尾部 seek；2.8 MB 实测 342× 降幅 |
+| **R29** | **本机（macOS）验不了 `/proc` 逻辑** | ⏳ **真机需复测** | 已用假 `/proc` 树离线覆盖 61 项（`tools/selftest-console_server.py` + `tools/selftest-cmd-main.sh`）；真机重点复测 4.16 列出的 5 条，尤其是「故意制造端口冲突」那条 |
+| **R30** | **本文档多次引用「离线自测 N 项全绿」却无脚本** | ✅ **已修（4.16）** | 4.9.8 / 4.12.5 引用的自测脚本从未入库，数字不可复现。本次加固的自测已随仓库分发（`tools/selftest-*`），今后不要再写没有脚本的自测数字 |
 
 **后台任务状态**：1.0.5 测试包构建完成后即无运行中的构建/打包进程。
 
