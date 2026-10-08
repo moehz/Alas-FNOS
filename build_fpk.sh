@@ -335,7 +335,7 @@ fi
 
 # --- 4. 打包 -------------------------------------------------------------
 say "fnpack build"
-[ -x "$FNPACK" ] || die "缺少可执行打包器: $FNPACK（见 docs/构建指南.md）"
+[ -x "$FNPACK" ] || die "缺少可执行打包器: ${FNPACK}（见 docs/构建指南.md）"
 # fnpack 会在 $TMPDIR 下创建 fnpack.<时间戳> 临时目录；若该路径已被占用（例如上一次
 # 构建中断留下同名目录），会报 "Copy pack ... is a directory" 这类与包内容无关的
 # 假失败。为此给每次构建准备一个干净的私有 TMPDIR。
