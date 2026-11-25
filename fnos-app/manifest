@@ -1,5 +1,5 @@
 appname=alas-fnos
-version=1.2.1
+version=1.2.2
 display_name=ALAS
 desc=ALAS (AzurLaneAutoScript) 飞牛 fnOS 原生控制台。内置可移植 Python 运行时，经统一网关访问；可启停 Alas 并打开其配置界面，ADB 设备由使用者自行配置。
 source=thirdparty
@@ -15,4 +15,4 @@ ctl_stop=true
 checkport=false
 micro_app=true
 disable_authorization_path=true
-changelog=桌面入口直达 Alas 配置界面（去掉未启用的前端托管与多余跳转）；「检查更新」的版本真值改取官方提交列表（与提交历史同源），镜像只在官方接口不可达时按顺序兜底，避免过期镜像被当成最新；反代前校验 22267 端口监听者身份，被外部进程（例如手工以 root 启动过、一直没退的旧 gui.py）占用时明确报错，不再静默把请求转给旧代码；控制台与 Alas 日志自动封顶轮转，7x24 挂机不再无限增长。
+changelog=更新通知不再依赖打开更新器页面：应用启动即检查一次上游，之后每 30 分钟后台静默复查；只要浏览器开着 Alas 界面，任意页面都会收到「有新版本」提示，点击直达更新面板。后台检查新增异常护栏——网络不通只记为「检查失败」，不会误报「已是最新」，也不会中断后续轮询。
