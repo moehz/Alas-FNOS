@@ -27,7 +27,9 @@
 > 开发机上的旧包须先卸载（数据默认保留，不自动迁移）。真机复测：**1.2.0 已装并进应用信息页**，
 > 剩余项待复测；首发前补了 `distributor` 字段（「发布者」不再为空，见 4.15.1）。
 > 遗留在案的 22267 监听者身份校验**已于 2026-10-05 实现**（见 4.16），
-> 同时补了日志封顶、`tail_log` 尾读、PID 归属校验与 `$TRIM_PKGHOME`，待打包 1.2.2 后真机复测。
+> 同时补了日志封顶、`tail_log` 尾读、PID 归属校验与 `$TRIM_PKGHOME`。解包核对 1.2.1 产物确认：
+> **4.16 加固已随 1.2.1 发布**（旧包内已含 `listener_owner`），并非「待打包 1.2.2」；
+> 1.2.2 打包的是 4.9.6 的后台更新通知修订。R29 的 `/proc` 真机复测仍待完成。
 
 ---
 
@@ -70,9 +72,12 @@
 3. **包内自带可移植 x86_64 CPython 3.7**（不用 Docker 运行时、不用 `install_dep_apps=python312`）。
 4. **不打包 `av`**（砍掉 FFmpeg 依赖闭包）。
 5. **配置落盘用 `$TRIM_PKGVAR`**（应用私有目录）。
-6. **强制** `InstallDependencies=false`、`CheckUpdateInterval=0`、`AutoRestartTime=null`；
+6. **强制** `InstallDependencies=false`、`AutoRestartTime=null`；
    `EnableReload=true`、`AutoUpdate=true` —— 后两者自 1.0.2 起放开，配合 4.9 的补丁实现
    脚本热更新（`EnableReload` 让上游 `gui.py` 建立重启循环，更新完成后自动加载新代码）。
+   `CheckUpdateInterval=30` 自 2026-11-12 起放开（后台轮询，任意页面可收更新通知，见 4.9.6）；
+   早期为规避「包内无 git 导致周期性 `Git fetch failed`」而设为 `0`，该理由在补丁接管
+   `Updater._check_update` 后已失效。
 7. appname 固定为 **`alas-fnos`**（网关前缀 `/app/alas-fnos` 由 console_server 按 appname 推导）。
    **（2026-10-04 修订）** 原值为 `azurlaneautoscript`；为公开发布改名 —— 应用标识 `alas-fnos`、
    显示名 `ALAS`、开发者 `moehz`、仓库 `https://github.com/moehz/Alas-FNOS`，版本跳到 1.2.0。
@@ -343,8 +348,10 @@ nohup "$PY" "$TRIM_APPDEST/server/console_server.py" \
 
 > ⚠️ **本节的结论已被 4.9 取代。** 1.0.2 起改为**接管**更新面板：保留上游页面不动，把底层的
 > git 流程换成源码包交换。本节保留是为了说明当初为什么判定「照搬上游不划算」，以及
-> `CheckUpdateInterval=0` 这类强制键的来由 —— 其中 `CheckUpdateInterval=0` 与
-> `InstallDependencies=false` **现在仍然保留**，只有 `AutoUpdate` / `EnableReload` 已放开。
+> `CheckUpdateInterval=0` 这类强制键的来由 —— **目前只有 `InstallDependencies=false`
+> 仍然成立**；`AutoUpdate` / `EnableReload` 自 1.0.2 放开，`CheckUpdateInterval` 自
+> 2026-11-12 放开为 `30`（见 4.9.6）。下方括号里「包内没有 git 会周期性报错」的理由
+> 在补丁接管 `_check_update` 后已失效，保留仅作历史记录。
 
 当时的结论：**是刻意关闭的，属于本打包方式的必然取舍，不是运行时裁剪导致的**。代码依据（上游 master）：
 
@@ -354,7 +361,9 @@ nohup "$PY" "$TRIM_APPDEST/server/console_server.py" \
   —— 依赖更新同样跳过；且运行时依赖已由我们连同 Python 一起钉死。
 - `module/webui/app.py::startup()`：`if updater.delay > 0: task_handler.add(updater.check_update, updater.delay)`，
   而 `updater.delay = CheckUpdateInterval * 60`。故 **`CheckUpdateInterval=0` 会让「检查更新」后台轮询根本不注册**
-  （若用别的非零值，包内没有 git 会变成每 N 分钟一次 `Git fetch failed`）。
+  （当时若用别的非零值，包内没有 git 会变成每 N 分钟一次 `Git fetch failed`）。
+  → **2026-11-12 修订**：`_check_update` 已由 `patch/alas_fnos.py` 接管为 HTTP 探测，不再调用 git；
+  该值已改为 `30`，后台轮询重新启用，详见 4.9.6。
 - `task_handler.add(updater.schedule_update(), 86400)` + `AutoRestartTime=null`：`schedule_time` 为 None，
   该定时任务在首次运行时 `remove_current_task()` 自我摘除。
 - 设置页仍保留 Alas 自带的「检查更新」按钮（`app.py` 内 `put_button(..., onclick=updater.check_update)`），
@@ -668,7 +677,7 @@ FORCED_DEPLOY = {
     "InstallDependencies": "false",   # 运行时依赖随包冻结，绝不让 pip 动
     "EnableReload": "true",           # ← 1.0.2 放开：让 gui.py 建立重启循环
     "AutoUpdate": "true",             # ← 1.0.2 放开：否则 git_install 开头直接 return
-    "CheckUpdateInterval": "0",       # 0 才不注册 check_update 后台轮询
+    "CheckUpdateInterval": "30",      # 分钟；>0 才注册 check_update 后台轮询
     "AutoRestartTime": "null",        # None 使 schedule_update 任务自我摘除
     "ReplaceAdb": "false",
     "AdbExecutable": "adb",
@@ -676,6 +685,34 @@ FORCED_DEPLOY = {
     "Password": "null",
 }
 ```
+
+**2026-11-12 修订：后台更新通知（`CheckUpdateInterval: 0 → 30`）**
+
+现象：只有打开「更新器」页面才会检查并提示更新，其它页面收不到通知。
+
+根因链（上游代码未改）：
+
+- `module/webui/app.py:1264-1281` 的 `update_switch` 注册在 `AlasGUI.run()`（跨页面的主会话），
+  每 1 秒读 `updater.state`，为 `1` 时弹 `toast("ClickToUpdate")` —— **通知本来就是全局的**；
+- 但 `startup()` 里 `if updater.delay > 0: task_handler.add(updater.check_update, updater.delay)`，
+  而 `delay = CheckUpdateInterval * 60`。`0` 让后台轮询**根本不注册**；
+- 唯一调用 `updater.check_update()` 的路径是 `dev_update()`（`app.py:952`）—— 打开更新页那一刻。
+  于是 `state` 常驻 `0`，全局 switch 永远不会触发。
+
+`0` 是 1.0.2 之前为规避「包内无 git → 每 N 分钟 `Git fetch failed`」而设的（见 4.6）。
+补丁接管 `Updater._check_update` 后已改用 HTTP 探测、不碰 git，**理由失效**，故放开为 `30`：
+`utils.py` 的 `Task.next_run` 默认取 `time.time()`，故**应用启动即检查一次**，之后每 30 分钟
+一次（官方 API 一小时约 3 次，远低于 60 次/小时限流）。
+
+配套加固：`patch/alas_fnos.py::check_update` 加顶层 `try/except`，异常一律返回 `"failed"`。
+上游 `utils.py:215-217` 的 `TaskHandler.loop` 一旦捕获异常就会 **永久摘除该任务**并弹
+「应用发生内部错误」popup —— 后台路径绝不允许抛异常，否则比不检查更糟。
+
+验证：重启后 `console.log` 应出现 `Add task check_update`（上游 `TaskHandler.add` 打的日志）；
+停在 Overview / 配置页等任意页面也应能收到更新 toast，无需进入更新面板。
+
+> **发布口径**：本修订随 **1.2.2** 打包（2026-11-12）。4.16 加固包此前已随 1.2.1 发布，
+> 1.2.2 的 changelog 只包含后台更新通知与配套异常护栏，不重复声明加固内容。
 
 > **`EnableReload` 是关键**：`State.restart_event` **只在 `gui.py:18` 赋值**。
 > 我们此前直接起 uvicorn 绕过了 `gui.py`，导致 `restart_event is None` → 更新面板显示
@@ -1323,7 +1360,7 @@ adb 零配置、卸载清理。补 `distributor` 后的包**尚未真机复测**
 
 ---
 
-### 4.16 加固包（2026-10-05，未发布，待打包 1.2.2）
+### 4.16 加固包（2026-10-05，已随 1.2.1 发布）
 
 一次「只看不做假动作」的加固，全部落在 `fnos-app/` 源码内，**不动 runtime、不改装配流程**。
 起因是复查时发现 4.12.8 那条遗留加固项至今没实现，顺带查出一批 7x24 场景下的隐患。
@@ -1417,7 +1454,7 @@ bash    tools/selftest-cmd-main.sh          # 16 项
 
 **已解决、无需再踩的坑**：`av` 编译失败、`pywin32` 无 Linux 分发、`libssl.so.3` 缺失、`/alas` 308、`git fetch` 每 5 分钟失败。
 
-**4.16 新增/关闭的风险**（2026-10-05，待 1.2.2 真机复测）：
+**4.16 新增/关闭的风险**（2026-10-05，已随 1.2.1 发布；R29 真机复测仍待完成）：
 
 | 编号 | 风险 / 问题 | 状态 | 说明 |
 |---|---|---|---|
@@ -1426,7 +1463,7 @@ bash    tools/selftest-cmd-main.sh          # 16 项
 | **R27** | **PID 复用导致误杀无关进程组** | ✅ **已加固（4.16）** | `console_server` 与 `cmd/main` 动手前都校验 `/proc/<pid>/cmdline`；读不到时按原逻辑继续（不破坏 R20） |
 | **R28** | `tail_log` 的 I/O 随日志大小线性增长 | ✅ **已修（4.16）** | 改为尾部 seek；2.8 MB 实测 342× 降幅 |
 | **R29** | **本机（macOS）验不了 `/proc` 逻辑** | ⏳ **真机需复测** | 已用假 `/proc` 树离线覆盖 61 项（`tools/selftest-console_server.py` + `tools/selftest-cmd-main.sh`）；真机重点复测 4.16 列出的 5 条，尤其是「故意制造端口冲突」那条 |
-| **R30** | **本文档多次引用「离线自测 N 项全绿」却无脚本** | ✅ **已修（4.16）** | 4.9.8 / 4.12.5 引用的自测脚本从未入库，数字不可复现。本次加固的自测已随仓库分发（`tools/selftest-*`），今后不要再写没有脚本的自测数字 |
+| **R30** | **本文档多次引用「离线自测 N 项全绿」却无脚本** | ⚠️ **部分闭环（4.16）** | 4.9.8 / 4.12.5 引用的自测脚本从未入库，数字不可复现。本次加固的自测脚本 `tools/selftest-*` 仍为本地未跟踪文件、未入库（发布仓库只有文档结论），今后不要再写没有脚本的自测数字 |
 
 **后台任务状态**：1.0.5 测试包构建完成后即无运行中的构建/打包进程。
 
@@ -1450,7 +1487,7 @@ bash    tools/selftest-cmd-main.sh          # 16 项
 | 1 | `<target>/alas` 退化为种子 | ✅ 一致 | 未改为软链；`prepare()` 不再写 `<target>`，与 4.7「target 只读」自洽 |
 | 2 | import hook 注入 | ✅ 一致 | `<target>/patch/sitecustomize.py` + `PYTHONPATH`（**不随 alas 更新失效**，方案关键点） |
 | 2 | 替换 `Updater` 三个方法 | ✅ 一致 | `get_commit` / `_check_update` / `git_install`，见 4.9.1 |
-| 2 | 放开 `AutoUpdate`、`CheckUpdateInterval=0` | ⚠️ **多放开一个** | 还须放开 **`EnableReload=true`** —— 否则 `restart_event is None`，更新不会自动重启（4.9.6，本次实测发现） |
+| 2 | 放开 `AutoUpdate`（当时仍保持 `CheckUpdateInterval=0`） | ⚠️ **多放开一个** | 还须放开 **`EnableReload=true`** —— 否则 `restart_event is None`，更新不会自动重启（4.9.6，本次实测发现）；`CheckUpdateInterval` 已于 2026-11-12 放开为 `30` |
 | 3 | GOC `latest.json` 探测（91 B） | ✅ 一致 | 双 CDN 回退，TTL 300 s + 启动后台预热 |
 | 4 | `codeload` tar.gz，回退第三方代理 | ✅ 一致 | 三级回退：`codeload` → `ghfast.top` → `gh-proxy.com` |
 | 5 | staging → 校验 → 交换 → 重链 → 回滚 | ✅ 一致 | 用 `os.replace` 保证同卷原子；`_prune` 只留一份 prev（4.9.3） |
