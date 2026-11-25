@@ -60,13 +60,16 @@ HOP_BY_HOP = {
 # 每次启动 Alas 前强制写死的 deploy 配置：
 #   AutoUpdate=true          允许更新面板工作（真实实现由 <target>/patch 注入，不依赖 git）
 #   EnableReload=true        由上游 gui.py 建立重启循环，更新完成后自动重载新代码
-#   CheckUpdateInterval=0    不注册后台轮询，只在用户点按钮时检查（否则会周期性报错）
+#   CheckUpdateInterval=30   每 30 分钟后台检查一次；上游 update_switch 会据此在
+#                            任意页面弹「有新版本」toast，不必非得打开更新面板。
+#                            补丁已接管 Updater._check_update（不再走 git），故不存在
+#                            「每 N 分钟一次 Git fetch failed」这个历史顾虑。
 #   InstallDependencies=false 依赖随运行时冻结，禁止 pip 改动安装环境
 FORCED_DEPLOY = {
     "InstallDependencies": "false",
     "EnableReload": "true",
     "AutoUpdate": "true",
-    "CheckUpdateInterval": "0",
+    "CheckUpdateInterval": "30",
     "AutoRestartTime": "null",
     "ReplaceAdb": "false",
     "AdbExecutable": "adb",

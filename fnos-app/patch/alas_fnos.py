@@ -485,41 +485,48 @@ def get_commit(self, revision="", n=1, short_sha1=False):
 
 
 def check_update(self):
-    """替代 ``Updater._check_update``：用 ``latest.json``（91 B）判断是否有更新。
+    """替代 ``Updater._check_update``：用官方提交列表（镜像按顺序兜底）判断是否有更新。
 
     返回值直接就是 UI 状态：``True`` 有更新 / ``False`` 已是最新 / ``"failed"`` 检查失败。
     **探测不到上游时必须返回 ``"failed"``，不能返回 ``False``** —— 上游自己在这里
     返回 ``0``，于是「网络不通 / 证书校验失败」在面板上显示成「已是最新」，
     这是最容易被误判的一类故障（本次真机问题排查就从它开始）。
+
+    ``CheckUpdateInterval > 0`` 时本函数还会被 ``startup()`` 注册的后台任务周期调用。
+    上游 ``TaskHandler.loop`` 一旦捕获异常就会 **永久摘除该任务**并弹「应用发生内部
+    错误」popup，所以这里必须吞掉所有异常、以 ``"failed"`` 收尾，绝不让轮询中断。
     """
     self.state = "checking"
+    try:
+        version = read_version()
+        local = version.get("base_commit") or ""
+        info, _history = fetch_remote(force=True)
+        remote = (info[0] if info else "") or ""
 
-    version = read_version()
-    local = version.get("base_commit") or ""
-    info, _history = fetch_remote(force=True)
-    remote = (info[0] if info else "") or ""
+        if not remote:
+            _log(
+                "检查更新失败：无法获取可信的上游版本"
+                "（网络不可达、证书校验失败，或该 commit 未获官方接口确认），本次不作判断"
+            )
+            return "failed"
+        if not local:
+            _log("本地版本未知（%s 无记录），视为有更新" % version_file())
+            return True
 
-    if not remote:
+        behind = local != remote
         _log(
-            "检查更新失败：无法获取可信的上游版本"
-            "（网络不可达、证书校验失败，或该 commit 未获官方接口确认），本次不作判断"
+            "检查更新：本地 %s（%s）/ 上游 %s → %s"
+            % (
+                local[:8],
+                version.get("source") or "?",
+                remote[:8],
+                "有更新" if behind else "已是最新",
+            )
         )
+        return behind
+    except Exception as exc:
+        _log("检查更新异常（按失败处理，后台轮询不中断）：%r" % (exc,))
         return "failed"
-    if not local:
-        _log("本地版本未知（%s 无记录），视为有更新" % version_file())
-        return True
-
-    behind = local != remote
-    _log(
-        "检查更新：本地 %s（%s）/ 上游 %s → %s"
-        % (
-            local[:8],
-            version.get("source") or "?",
-            remote[:8],
-            "有更新" if behind else "已是最新",
-        )
-    )
-    return behind
 
 
 def git_install(self):
